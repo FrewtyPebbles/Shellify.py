@@ -22,10 +22,19 @@ class CLITool:
         self._stdout:bytes = None
         self.pipe_err = False
         self.concurrent = False
+        self.has_run = False
 
     def __call__(self, *args: Any) -> CLITool:
         self.args = [self.name, *[str(arg) for arg in args]]
         return self
+    
+    def finish(self):
+        "Blocks code untill process is finished.  Basically the same as `.join()`ing the thread."
+        if self.thread != None:
+            self.thread.join()
+        else:
+            raise RuntimeError("Concurrent process is not running.")
+
     
     def _run(self):
         "Run the command."
@@ -36,18 +45,24 @@ class CLITool:
 
         if isinstance(self.pipe_in, CLITool):
             if self.pipe_err:
-                pipe_in = self.pipe_in.run().stderr
+                if not self.pipe_in.has_run:
+                    self.pipe_in.run()
+                pipe_in = self.pipe_in.stderr
             else:
-                pipe_in = self.pipe_in.run().stdout
+                if not self.pipe_in.has_run:
+                    self.pipe_in.run()
+                pipe_in = self.pipe_in.stdout
         else:
             pipe_in = self.pipe_in
 
+        #print(self.name, "RUNNING")
         self._stdout, self._stderr = self.process.communicate(pipe_in)
 
         return self
     
     def run(self):
         "Runs the process."
+        self.has_run = True
         if self.concurrent:
             return self._run_concurrent()
         else:
@@ -111,17 +126,17 @@ class CLITool:
     def stdout(self):
         if self._stdout != None:
             return self._stdout
-        if self.concurrent:
+        elif self.thread != None:
             self.thread.join()
-            return self._stdout
+        return self._stdout
     
     @property
     def stderr(self):
         if self._stderr != None:
             return self._stderr
-        if self.concurrent:
+        elif self.thread != None:
             self.thread.join()
-            return self._stderr
+        return self._stderr
 
 class Shell:
     def __getattribute__(self, name: str) -> CLITool:
@@ -137,8 +152,13 @@ class Shell:
 SHELL = Shell()
 
 if __name__ == "__main__":
-    
-    process = ~(SHELL.cat("./shellify.py") | SHELL.grep("SHELL"))
+    process, process_err = ~((p1 := (SHELL.echo("SHELL") | SHELL.tee("/dev/stderr"))) | SHELL.grep("SHELL")), ~(p1 @ SHELL.grep("SHELL"))
     process.run()
+    
+    process.finish()
+    # this joins the thread/process so `p1` and the rest of `process` is evaluated at a predictable time.
 
-    print(f"result:\n{process.stdout.decode()}")
+    process_err.run()
+    
+    print(f"p_out:\n{process.stdout.decode()}")
+    print(f"p_err:\n{process_err.stdout.decode()}")

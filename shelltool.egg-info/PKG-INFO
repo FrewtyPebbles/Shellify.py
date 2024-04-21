@@ -1,3 +1,17 @@
+Metadata-Version: 2.1
+Name: shelltool
+Version: 0.1.0
+Summary: A better way to compose shell-like commands in python.
+Author: William L.
+Project-URL: Homepage, https://github.com/FrewtyPebbles/Shellify.py
+Project-URL: Issues, https://github.com/FrewtyPebbles/Shellify.py/issues
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
 # Shelltool
 
 Shelltool is an api that makes dealing with and composing subprocesses in python easier, more readable, and more immediately useful.  It accomplishes this by utilizing syntax that makes it feel more like composing procedures in Bash rather than dealing with things like `Popen` or `Thread(target=lambda:subprocess.run())`.
@@ -156,21 +170,4 @@ cat_to_grep_cmd.run()
 print(cat_to_grep_cmd.pid) # Here it is!
 
 print(cat_to_grep_cmd.stdout.decode())
-```
-
-## Uh Oh! Race conditions! (How To Join a Concurrent Subprocess Back To It's Spawning Thread)
-
-To join a subprocess back to its spawning thread call `.finish()`:
-```py
-if __name__ == "__main__":
-    process, process_err = ~((p1 := (SHELL.echo("SHELL") | SHELL.tee("/dev/stderr"))) | SHELL.grep("SHELL")), ~(p1 @ SHELL.grep("SHELL"))
-    process.run()
-    
-    process.finish()
-    # this joins the thread/process so `p1` and the rest of `process` is evaluated at a predictable time.
-
-    process_err.run()
-    
-    print(f"p_out:\n{process.stdout.decode()}")
-    print(f"p_err:\n{process_err.stdout.decode()}")
 ```
