@@ -162,15 +162,26 @@ print(cat_to_grep_cmd.stdout.decode())
 
 To join a subprocess back to its spawning thread call `.finish()`:
 ```py
-if __name__ == "__main__":
-    process, process_err = ~((p1 := (SHELL.echo("SHELL") | SHELL.tee("/dev/stderr"))) | SHELL.grep("SHELL")), ~(p1 @ SHELL.grep("SHELL"))
-    process.run()
-    
-    process.finish()
-    # this joins the thread/process so `p1` and the rest of `process` is evaluated at a predictable time.
+process, process_err = ~((p1 := (SHELL.echo("SHELL") | SHELL.tee("/dev/stderr"))) | SHELL.grep("SHELL")), ~(p1 @ SHELL.grep("SHELL"))
+process.run()
 
-    process_err.run()
-    
-    print(f"p_out:\n{process.stdout.decode()}")
-    print(f"p_err:\n{process_err.stdout.decode()}")
+process.finish()
+# this joins the thread/process so `p1` and the rest of `process` is evaluated before `p1` is used to evaluate `process_err`.
+
+process_err.run()
+
+print(f"p_out:\n{process.stdout.decode()}")
+print(f"p_err:\n{process_err.stdout.decode()}")
+```
+
+***Side note***, you could also fix this specific race condition without calling `.finish()` by running `p1` before `process` and `process_err`:
+
+```py
+process, process_err = ~((p1 := (SHELL.echo("SHELL") | SHELL.tee("/dev/stderr"))) | SHELL.grep("SHELL")), ~(p1 @ SHELL.grep("SHELL"))
+p1.run()
+process.run()
+process_err.run()
+
+print(f"p_out:\n{process.stdout.decode()}")
+print(f"p_err:\n{process_err.stdout.decode()}")
 ```
