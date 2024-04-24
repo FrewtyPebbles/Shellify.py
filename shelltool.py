@@ -24,11 +24,15 @@ class CLITool:
         "A class that represents a shell command."
         self.name = name
         self.process:subp.Popen = None
-        self.pipe_in:bytes | CLITool = None
         self.args = []
         self.thread = th.Thread(target=lambda:self._run())
         self._stdout_thread = th.Thread(target=lambda:self._stdout_reader())
         self._stderr_thread = th.Thread(target=lambda:self._stderr_reader())
+
+        # operator object storage
+        self._lhs_and_command:CLITool = None
+        self.pipe_in:bytes | CLITool = None
+        self._pipe_in_data:bytes = b''
         
         self._stderr:bytes = None
         self._stdout:bytes = None
@@ -55,45 +59,41 @@ class CLITool:
     
     def _run(self):
         "Run the command."
-        self.process = subp.Popen(" ".join(self.args), shell=True,
-            stdout=subp.PIPE, stderr=subp.PIPE, stdin=subp.PIPE)
-        
-        self._stdout_thread.start()
-        self._stderr_thread.start()
 
-        pipe_in = b''
+        if isinstance(self._lhs_and_command, CLITool):
+            self._lhs_and_command.run()
         
         if isinstance(self.pipe_in, CLITool):
             if not self.pipe_in.has_run:
                 self.pipe_in.run()
             if self.pipe_in_type == PipeType.ERR:
-                pipe_in = self.pipe_in.stderr
+                self._pipe_in_data = self.pipe_in.stderr
             elif self.pipe_in_type == PipeType.OUT:
-                pipe_in = self.pipe_in.stdout
+                self._pipe_in_data = self.pipe_in.stdout
             elif self.pipe_in_type == PipeType.ALL:
-                pipe_in = self.pipe_in.all
-        else:
-            pipe_in = self.pipe_in
-        
-        if pipe_in != None:
-            self.process.stdin.writelines(pipe_in.splitlines())
+                self._pipe_in_data = self.pipe_in.all
+        elif self.pipe_in != None:
+            self._pipe_in_data = self.pipe_in
 
-        # self._stdout, self._stderr = self.process.communicate()
-        self._kill_stream_threads()
         
-        if len(self._stdout) < len(self._stdout_buffer) if self._stdout != None else True:
-            self._stdout = self._stdout_buffer
-        if len(self._stderr) < len(self._stderr_buffer) if self._stderr != None else True:
-            self._stdout = self._stdout_buffer
-        self._all = self._all_buffer
+        
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+
+        if self.pipe_in != None:
+            self.process.stdin.write(self._pipe_in_data)
+            self.process.stdin.flush()
+            self.process.stdin.close()
+        
         
     
         return self 
         
     def _stdout_reader(self):
-        while self.process.poll() == None:
+        while self.process.poll() == None if self.process != None else True:
             try:
-                for data in self.process.stdout.readlines():
+                if not self.process.stdout.closed:
+                    data = self.process.stdout.readline()
                     self._stdout_queue.put(data, False)
                     self._stdout_buffer += data
                     self._all_queue.put(data, False)
@@ -103,16 +103,16 @@ class CLITool:
                 
 
     def _stderr_reader(self):
-        while self.process.poll() == None:
+        while self.process.poll() == None if self.process != None else True:
             try:
-                for data in self.process.stderr.readlines():
+                if not self.process.stderr.closed:
+                    data = self.process.stderr.readline()
                     self._stderr_queue.put(data, False)
                     self._stderr_buffer += data
                     self._all_queue.put(data, False)
                     self._all_buffer += data
             except:
                 pass
-                
         
                 
     
@@ -122,21 +122,27 @@ class CLITool:
         if self._stderr_thread.is_alive():
             self._stderr_thread.join()
         
-        
-        
+    
+    def finish(self, ignore_concurrent = False):
+        "Blocks code untill process is finished.  Basically the same as `.join()`ing the thread."
+        if self.concurrent or ignore_concurrent:
+            self.process.wait()
+            self._stdout = self._stdout_buffer
+            self._stderr = self._stderr_buffer
+            self._all = self._all_buffer
+
     
     def run(self):
         "Runs the process."
         self.has_run = True
+        self.process = subp.Popen(" ".join(self.args), shell=True,
+            stdout=subp.PIPE, stderr=subp.PIPE, stdin=subp.PIPE if self.pipe_in != None else None)
         if self.concurrent:
             self._run_concurrent()
-            while self.process == None:
-                pass
-            return self
         else:
             self._run()
-            self.finish()
-            return self
+            self.finish(True)
+        return self
         
     
     def _run_concurrent(self):
@@ -156,6 +162,14 @@ class CLITool:
             return other
         else:
             raise TypeError("Cant stdout pipe Shell command into type other than another shell command")
+        
+    def __and__(self, other:CLITool):
+        "`;`\n\nRun command on left hand side of `&` before command on right hand side of `&`."
+        if isinstance(other, CLITool):
+            other._lhs_and_command = self
+            return other
+        else:
+            raise TypeError("Cannot execute non Shell command on left hand side of `and`.")
     
     def __ror__(self, other:Any):
         "`|`\n\nPipe python type into right hand side as a string."
@@ -204,11 +218,11 @@ class CLITool:
         "Grabs next `(stdout, stderr)` in the stream captured durring runtime.\n\n~~NOTE~~: If the stdout is buffered, it will not capture the stdout and stderr until the process is complete."
         stdout:bytes | None = None
         if not self._stdout_queue.empty():
-            stdout = self._stdout_queue.get(True)
+            stdout = self._stdout_queue.get(False)
 
         stderr:bytes | None = None
         if not self._stderr_queue.empty():
-            stderr = self._stderr_queue.get(True)
+            stderr = self._stderr_queue.get(False)
         
         
         return (stdout, stderr)
@@ -236,15 +250,6 @@ class CLITool:
         if self.process != None:
             return self.process.pid
         return None
-    
-    def finish(self):
-        "Blocks code untill process is finished.  Basically the same as `.join()`ing the thread."
-        if self.thread.is_alive():
-            self._kill_stream_threads()
-            self.thread.join()
-        
-        # else:
-        #     raise RuntimeError("Concurrent process is not running.")
     
     @property
     def stdout(self):
@@ -282,17 +287,20 @@ SHELL = Shell()
 
 if __name__ == "__main__":
     
-    process = (SHELL.findstr("/s", "/c:Tool", "C:/Users/William/Documents/Programming Repos/*.py") | SHELL.findstr("/s", "/c:SHELL"))
-    #process = SHELL.python("-u", "./test/t1.py")
+    
+    #process = ~("SHELL is\nso\ncool" | SHELL.findstr("/s", "/c:SHELL"))
+    process = ~SHELL.python("-u", "./test/t1.py")
+    #process = ~(SHELL.timeout(5) & SHELL.findstr("/s", "/c:Tool", "C:/Users/William/Documents/Programming Repos/*.py") | SHELL.findstr("/s", "/c:SHELL"))
     process.run()
     while process.running or not process.stream_empty:
         out, err = process.next_stream_line()
-        #print("hello")
 
         if out:
+            print(f"PROCESS RUNNING: {process.running}")
             sys.stdout.write(f"out:\n{out.decode()}")
 
         if err:
+            print(f"PROCESS RUNNING: {process.running}")
             sys.stdout.write(f"err:\n{err.decode()}")
         
 
